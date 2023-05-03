@@ -1,7 +1,7 @@
 # KESU
 Knowledge Enhancement and Scene Understanding for Knowledge-based Visual Question Answering
 
-This code implements a multimodal knowledge extraction model. 
+This code implements a KESU model. 
 
 ## Requirement
 Pytorch==1.8.1+cu111     
