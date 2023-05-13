@@ -16,5 +16,5 @@ The image features are provided by and downloaded from the original bottom-up at
 
 ### Models
 
-[our model] (https://drive.google.com/file/d/1OgoljCqV5rRZeOCQCSv5l_bd7AJmEwb7/view?usp=sharing)
+[our model](https://drive.google.com/file/d/1OgoljCqV5rRZeOCQCSv5l_bd7AJmEwb7/view?usp=sharing)
 
