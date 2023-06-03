@@ -15,10 +15,8 @@ help - 用来描述这个选项的作用
 """
 parser = argparse.ArgumentParser()
 parser.add_argument("--mode", type=str, default='train', help='选择是训练还是测试')
-parser.add_argument("--pretrain", action="store_true", help='use vqa2.0 implict konwledge or not')
 parser.add_argument('--batch_size', type=int, default=64, help='minibatch size')
 parser.add_argument('--filter_vocb', action='store_true', help='是否采用过滤的词典')
-parser.add_argument('--use_semantic_match', type=int, default=0, help='是否采用语义性匹配')
 parser.add_argument('--reset_params', action="store_true", help='重置优化器等信息')
 parser.add_argument('--num_epochs', type=int, default=100, help='number of epochs')
 parser.add_argument('--model_save_dir', type=str, default='model_save/', help='model file path')
@@ -55,22 +53,7 @@ class Cfgs():
         # Max length of  sentences
         self.MAX_TOKEN = 16
 
-        # ------------------------
-        # ---- 出lxmert层 Network Params ----
-        # ------------------------
-        # 经过lxmert层的表示学习维度 因为lxmert的hidden_size=768
-
-        # lxmert处理后的文本特征投射
-
-        # LXMERT处理后的CLS相关参数
-
-        # LXMERT输出特征经过投射之后的大小
-
-        # 最后表示學習的維度 一般在300-500
-
-        # 句子嵌入的维度
-        # 句子嵌入的维度 投射之后的维度
-
+       
         # ------------------------
         # ---- MCA Network Params ----
         # ------------------------
