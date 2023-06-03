@@ -80,7 +80,169 @@ def train():
         train_pre_ans = []
         train_ground_truths = []
 
-        
+        for batch_data in tqdm_data:
+            step += 1
+            input_id, attention_mask, token_type_ids, visual_feature, spatial_feature, sentence_embed, caption_embeds = process_batch_data(
+                batch_data)
+
+            ans_id = batch_data['ans_dic_ids']
+
+            # vis_and_konw = model(input_id, attention_mask, token_type_ids, visual_feature, spatial_feature,
+            #                               sentence_embed,caption_embeds)
+            vis_and_konw, output_2 = model(input_id, attention_mask, token_type_ids, visual_feature, spatial_feature,
+                                           sentence_embed, caption_embeds)
+
+            # 查找表训练
+            ans_id_tensor = torch.tensor(ans_id).view(vis_and_konw.shape[0], -1).long().to(device)  # batch*10
+            if torch.cuda.device_count() > 1:
+                # 词嵌入
+                most = model.module.decode_tail(ans_id_tensor)
+            else:
+                most = model.decode_tail(ans_id_tensor)
+            # p=2 指的是二范式
+            most = F.normalize(most, dim=-1, p=2)
+
+            # 候选答案训练
+            if torch.cuda.device_count() > 1:
+                # 送入nn.ebedding编码 然后得到候选答案 与vis_and_konw计算相似度
+                answer_candidate_tensor_train = model.module.decode_tail(answer_candidate_tensor)
+                cls1 = model.module.cal_sim(vis_and_konw, answer_candidate_tensor_train)
+                if output_2!=None:
+                    cls2 = model.module.cal_sim(output_2, answer_candidate_tensor_train)
+            else:
+                answer_candidate_tensor_train = model.decode_tail(answer_candidate_tensor)
+                cls1 = model.cal_sim(vis_and_konw, answer_candidate_tensor_train)
+                if output_2 != None:
+                    cls2 = model.cal_sim(output_2, answer_candidate_tensor_train)
+            vis_and_konw = F.normalize(vis_and_konw, dim=1, p=2)
+            if output_2 != None:
+                output_2 = F.normalize(output_2, dim=1, p=2)
+
+            optimizer.zero_grad()  # 在计算反向传播之前将梯度置为0
+
+            # 修改 取出现次数最多的 答案
+            ans_most_id = []
+            for curr_ans in ans_id:
+                # 找 出现次数最多的 作为答案
+                counter = Counter(curr_ans)
+                most_ans = counter.most_common(1)[0][0]
+                ans_most_id.append(most_ans)
+
+            ans_id_tensor = torch.tensor(ans_most_id).long().to(device)
+            # 交叉熵损失 输入两个张量 分别是 B*C 和B  其中C指的是有C个类别
+            if output_2 != None:
+                loss_cl = criterion_ce(cls1+cls2, ans_id_tensor)
+                # loss_bce = criterion_bce(cls1+cls2,  batch_data['ans_map_all_dic_score'].to(device))
+            else:
+                loss_cl = criterion_ce(cls1, ans_id_tensor)
+                # loss_bce = criterion_bce(cls1 , batch_data['ans_map_all_dic_score'].to(device))
+            loss = 0
+            # 10个答案 每个都进行损失计算
+            for i in range(10):
+                most_i = most[:, i, :]  # most b*10*300
+                # loss+=loss_bce
+                loss+=loss_cl
+                loss += criterion_mse(vis_and_konw, most_i) + criterion_contra(vis_and_konw, most_i)
+                if output_2 != None:
+                    loss += criterion_mse(output_2, most_i) + criterion_contra(output_2, most_i)
+
+            loss_stat = loss.item()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            loss_sum += loss_stat
+
+            # 答案生成
+            with torch.no_grad():
+                if torch.cuda.device_count() > 1:
+                    answer_candidate_tensor_train = model.module.decode_tail(answer_candidate_tensor)
+                else:
+                    answer_candidate_tensor_train = model.decode_tail(answer_candidate_tensor)
+                answer_candidate_tensor_train = F.normalize(answer_candidate_tensor_train, dim=1, p=2)
+                if output_2 != None:
+                    trip_predict = generate_tripleid_2(vis_and_konw.float(), output_2.float(),
+                                                       answer_candidate_tensor_train)
+                else:
+                    trip_predict = generate_tripleid(vis_and_konw.float(),answer_candidate_tensor_train)
+
+                for i, pre in enumerate(ans_id):
+                    train_ground_truths.append(ans_id[i])
+                    train_pre_ans.append(trip_predict[i])
+
+            tqdm_data.set_description('Epoch %d/%d train_loss = %.4f lr = %.8f' % (
+                epoch + 1, args.num_epochs, loss_stat, optimizer.param_groups[0]['lr']))
+        # 计算准确率
+        train_acc = cal_acc_multi(train_ground_truths, train_pre_ans)
+        logging.info('Epoch %d/%d , train_acc = %.4f ,loss_sum = %.4f' % (epoch + 1, args.num_epochs, train_acc, loss_sum))
+        writer_to_tensorboard(loss_sum, epoch + 1, 'loss', 'train')
+        # 每个epoch之后进行验证 即测试
+        if args.validate:
+            logging.info(f"Validation after epoch {epoch + 1}:")
+            val_acc = eval(model, test_dataloader, epoch + 1, answer_candidate_tensor)
+            writer_to_tensorboard(val_acc, epoch + 1, 'acc', 'val')
+            if val_acc > best_acc:
+                best_epoch = epoch + 1
+                best_acc = val_acc
+                if val_acc > 0.375:
+                    check_point_save(model, optimizer, scheduler, args.model_save_dir + 'model_for_epoch_%d.pth' % (epoch + 1),
+                                     best_epoch, best_acc)
+    logging.info(f'本次训练中准确率最高是 Epoch = {best_epoch} , Acc = {best_acc}')
+    total = sum([param.nelement() for param in model.parameters()])
+    logging.info("Number of parameter: %.2fM" % (total / 1e6))
+
+
+def eval(model=None, test_dataloader=None, epoch=0, answer_candidate_tensor=None):
+    if model == None and test_dataloader == None and len(args.load_pth) > 0:
+        epoch = int(args.load_pth.split('.')[0].split("_")[-1])
+        logging.info('加载 %s 模型进行评估' % args.load_pth)
+        test_dataset = OKVQADatasetVal(args)
+        test_dataloader = DataLoader(dataset=test_dataset, batch_size=args.batch_size, shuffle=False,
+                                     num_workers=cfgs.NUM_WORKERS, collate_fn=my_collate_val)
+        model = MyModel(test_dataset.vocab_num).to(device)
+        model.load_state_dict(
+            torch.load(os.path.join(args.model_save_dir, args.load_pth), map_location=device)['state_dict'])
+        answer_candidate_tensor = torch.arange(0, test_dataset.vocab_num).view(-1, 1).long().to(device)
+
+    pre_ans = []
+    ground_truths = []
+    model.eval()
+    eval_loss_sum = 0
+    for i, batch_data_val in enumerate(tqdm(test_dataloader)):
+        with torch.no_grad():
+            input_id_val, attention_mask_val, token_type_ids_val, visual_feature_val, spatial_feature_val, sentence_embed, caption_embeds= process_batch_data(
+                batch_data_val)
+            ans_id = batch_data_val['ans_dic_ids']
+
+            # vis_and_konw_val= model(input_id_val, attention_mask_val, token_type_ids_val,
+            #                                                      visual_feature_val,
+            #                                                      spatial_feature_val, sentence_embed, caption_embeds)
+            vis_and_konw_val,output_2_val= model(input_id_val, attention_mask_val, token_type_ids_val,
+                                                                 visual_feature_val,
+                                                                 spatial_feature_val, sentence_embed, caption_embeds)
+
+            vis_and_konw_val = F.normalize(vis_and_konw_val, dim=1, p=2)
+            if output_2_val!=None:
+                output_2_val = F.normalize(output_2_val, dim=1, p=2)
+
+            if torch.cuda.device_count() > 1:
+                answer_candidate_tensor_test = model.module.decode_tail(answer_candidate_tensor)
+            else:
+                answer_candidate_tensor_test = model.decode_tail(answer_candidate_tensor)
+            answer_candidate_tensor_test = F.normalize(answer_candidate_tensor_test, dim=1, p=2)
+            if output_2_val != None:
+                trip_predict = generate_tripleid_2(vis_and_konw_val.float(), output_2_val.float(),
+                                                   answer_candidate_tensor_test)
+            else:
+                trip_predict = generate_tripleid(vis_and_konw_val.float(), answer_candidate_tensor_test)
+            for i, pre in enumerate(ans_id):
+                ground_truths.append(ans_id[i])
+                pre_ans.append(trip_predict[i])
+
+    # 计算准确率
+    val_acc = cal_acc_multi(ground_truths, pre_ans)
+    logging.info('Epoch %d/%d , eval_acc = %.4f' % (epoch, args.num_epochs, val_acc))
+    return val_acc
+
 
 def generate_tripleid(batch_anchor, candidate):
     # cos distance   mm是矩阵乘 t是矩阵的转置
@@ -90,6 +252,26 @@ def generate_tripleid(batch_anchor, candidate):
     prob, idx_1 = torch.topk(similarity, k=1, dim=1, largest=True)
     return idx_1.squeeze()
 
+
+def generate_tripleid_2(batch_anchor1, batch_anchor2, candidate):
+    # cos distance   mm是矩阵乘 t是矩阵的转置
+    similarity = batch_anchor1.mm(candidate.t())  # b * v
+    similarity2 = batch_anchor2.mm(candidate.t())  # b * v
+
+    # cos largest:True  l2 largest:False
+    prob, idx_1 = torch.topk(similarity + similarity2, k=1, dim=1, largest=True)
+    return idx_1.squeeze()
+
+
+def generate_tripleid_3(batch_anchor1, batch_anchor2, batch_anchor3, candidate):
+    # cos distance   mm是矩阵乘 t是矩阵的转置
+    similarity = batch_anchor1.mm(candidate.t())  # b * v
+    similarity2 = batch_anchor2.mm(candidate.t())  # b * v
+    similarity3 = batch_anchor3.mm(candidate.t())  # b * v
+
+    # cos largest:True  l2 largest:False
+    prob, idx_1 = torch.topk(similarity + similarity2 + similarity3, k=1, dim=1, largest=True)
+    return idx_1.squeeze()
 
 
 def process_batch_data(batch_data):

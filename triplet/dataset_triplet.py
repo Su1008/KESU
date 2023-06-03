@@ -15,31 +15,18 @@ if args.filter_vocb == True:
 else:
     ans_dict = load_pick('data/okvqa/okvqa_ans_dic_all.pickle')
 
-if args.pretrain:
-    image_feature = load_pick('./data/vqa_v2/vqa_img_feature_train_filter.pickle')
-    train_data = load_json('./data/vqa_v2/vqa_train_filter.json')
-    # 如果是预训练 那么字典必须叠加
-    if args.filter_vocb == True:
-        ans_dict.update(load_pick('data/vqa_v2/ans_dic_filter_times.pickle'))
-    else:
-        ans_dict.update(load_pick('data/vqa_v2/vqav2_ans_dic.pickle'))
-
-    wiki_entites = ['This is a image'] * args.wiki_num
-    image_captions = ['This is a image'] * args.caption_num
-    sentence_transformer_wiki_encode = load_pick(
-        'data/sentence_transformer/sentence_transform_encode_vqav2_wiki_sentences.pickle')
-else:
-    image_feature = load_pick('./data/okvqa/okvqa_img_feature_train.pickle')
-    train_data = load_json('./data/okvqa/okvqa_train.json')
-    wiki_entites = load_pick('data/wikidata_okvqa_train2014_topentities.pkle')
-    image_captions = load_pick('data/captions/image_captions_train2014_union.pkl')
-    comet_sentences = load_pick('data/okvqa/train_comet_sematic_sorted.pickle')
-    sentence_transformer_wiki_encode = load_pick(
+image_feature = load_pick('./data/okvqa/okvqa_img_feature_train.pickle')
+train_data = load_json('./data/okvqa/okvqa_train.json')
+wiki_entites = load_pick('data/wikidata_okvqa_train2014_topentities.pkle')
+image_captions = load_pick('data/captions/image_captions_train2014_union.pkl')
+comet_sentences = load_pick('data/okvqa/train_comet_sematic_sorted.pickle')
+sentence_transformer_wiki_encode = load_pick(
         'data/sentence_transformer/sentence_transform_encode_train2014_wiki_sentences.pickle')
-    sentence_transformer_caption_encode = load_pick(
+sentence_transformer_caption_encode = load_pick(
         'data/sentence_transformer/sentence_transform_encode_train_captions_union.pickle')
-    sentence_transformer_comet_encode = load_pick(
+sentence_transformer_comet_encode = load_pick(
         'data/sentence_transformer/sentence_transform_encode_train_comet.pickle')
+    
 
 
 class OKVQADataset(Dataset):
